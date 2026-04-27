@@ -7,7 +7,7 @@ import { formatExaResults, searchCode, searchWeb } from "../lib/exa.ts";
 import { fetchMany } from "../lib/fetch.ts";
 import {
 	CONTENT_RETRIEVAL_CHARS,
-	FETCH_INLINE_CHARS,
+	FALLBACK_PREVIEW_CHARS,
 	formatChars,
 	SEARCH_PREVIEW_CHARS,
 	truncateText,
@@ -95,11 +95,11 @@ function store(pi: ExtensionAPI, data: StoredWebData): void {
 }
 
 function responseNotice(responseId: string, selector: string): string {
-	return `\n\n---\nresponseId: ${responseId}\nUse get_search_content({ responseId: "${responseId}", ${selector} }) for raw stored content. It returns up to ${formatChars(CONTENT_RETRIEVAL_CHARS)} by default; pass maxCharacters when you need a different bound.`;
+	return `\n\n---\nraw: get_search_content({ responseId: "${responseId}", ${selector} })`;
 }
 
 function fallbackNotice(reason: string | undefined): string {
-	return `[Distillation skipped: ${reason ?? "unavailable"}]\n\n`;
+	return `[Distillation fallback: ${reason ?? "unavailable"}]\n\n`;
 }
 
 function renderSimpleCall(
@@ -233,7 +233,10 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 				items,
 				...(distilled.text ? { synthesis: distilled.text } : {}),
 			});
-			const output = truncateText(sections.join("\n\n"), SEARCH_PREVIEW_CHARS);
+			const output = truncateText(
+				sections.join("\n\n"),
+				FALLBACK_PREVIEW_CHARS,
+			);
 			const text = distilled.text
 				? distilled.text
 				: `${fallbackNotice(distilled.details.fallbackReason)}${output.text}`;
@@ -308,7 +311,7 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 					items: [{ key: "0", title: query, query, content }],
 					...(distilled.text ? { synthesis: distilled.text } : {}),
 				});
-				const output = truncateText(content, SEARCH_PREVIEW_CHARS);
+				const output = truncateText(content, FALLBACK_PREVIEW_CHARS);
 				const text = distilled.text
 					? distilled.text
 					: `${fallbackNotice(distilled.details.fallbackReason)}${output.text}`;
@@ -406,11 +409,10 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 					],
 					...(distilled.text ? { synthesis: distilled.text } : {}),
 				});
-				const output = truncateText(docs.content, SEARCH_PREVIEW_CHARS);
-				const header = `Library: ${docs.libraryTitle}\nLibrary ID: ${docs.libraryId}\n\n`;
+				const output = truncateText(docs.content, FALLBACK_PREVIEW_CHARS);
 				const text = distilled.text
-					? `${header}${distilled.text}`
-					: `${header}${fallbackNotice(distilled.details.fallbackReason)}${output.text}`;
+					? distilled.text
+					: `${fallbackNotice(distilled.details.fallbackReason)}${output.text}`;
 				return textResult(
 					`${text}${responseNotice(responseId, "queryIndex: 0")}`,
 					{
@@ -536,7 +538,7 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 						},
 					);
 				}
-				const output = truncateText(result.content, FETCH_INLINE_CHARS);
+				const output = truncateText(result.content, FALLBACK_PREVIEW_CHARS);
 				const text = distilled.text
 					? distilled.text
 					: `${fallbackNotice(distilled.details.fallbackReason)}${output.text}`;
