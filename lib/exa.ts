@@ -88,7 +88,7 @@ export async function searchCode(
 		numResults: 8,
 		contents: {
 			highlights: { query, maxCharacters: Math.min(maxTokens ?? 8_000, 8_000) },
-			text: { maxCharacters: 300 },
+			text: { maxCharacters: Math.min(maxTokens ?? 8_000, 12_000) },
 		},
 	} as Parameters<Exa["search"]>[1]);
 	return { results: (result.results ?? []) as ExaResult[] };
@@ -124,7 +124,8 @@ export function formatExaResults(results: ExaResult[]): string {
 			if (result.author) lines.push(`Author: ${result.author}`);
 			if (Array.isArray(result.highlights) && result.highlights.length > 0) {
 				lines.push("", result.highlights.join("\n"));
-			} else if (result.text) {
+			}
+			if (result.text) {
 				lines.push("", result.text);
 			}
 			return lines.join("\n").trim();

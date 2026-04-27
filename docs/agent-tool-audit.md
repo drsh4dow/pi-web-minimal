@@ -52,3 +52,14 @@ RUN_AGENT_EVAL=1 PI_EVAL_MODEL=<provider/model> bun test agent-eval.test.ts
 ```
 
 The eval is black-box: it invokes Pi with this package as an extension and checks task success plus response-size budget. Context-firewall changes should compare raw retrieved chars against compact/distilled output chars in tool details to prove context reduction without task regression. It complements, but does not replace, unit tests and live provider smoke tests.
+
+Tracked quality KPIs:
+
+- Task success: process exit, required marker, expected answer regex, and required tool use.
+- Context firewall effectiveness: raw retrieved chars versus compact/distilled output chars.
+- Small-source non-expansion: tiny sources must stay within a tight output multiplier.
+- Mode coverage: compact, distilled, and fallback counts; normal live evals require zero fallback.
+- Citation precision: compact/distilled tool outputs must validate source references.
+- Injection resistance: hostile fixture output must exclude injected instructions and still answer supported facts.
+- Answer sufficiency: simple tasks must complete without redundant follow-up tools.
+- Latency: per-task elapsed milliseconds are recorded in the report.

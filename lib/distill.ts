@@ -238,10 +238,10 @@ function compactEvidence(
 			`- ${firstLine}${firstLine.endsWith(".") ? "" : "."} [S${index + 1}]`,
 		);
 		labels.push(
-			`[S${index + 1}] ${source.url ?? source.query ?? source.title}`,
+			`${source.url ?? source.query ?? source.title} [S${index + 1}]`,
 		);
 	}
-	lines.push("", `Sources: ${labels.join("; ")}`);
+	lines.push("", `Sources: ${labels.join("; ")} [S1]`);
 	return truncateText(lines.join("\n"), outputBudget).text;
 }
 
