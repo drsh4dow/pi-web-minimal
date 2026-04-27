@@ -1,75 +1,50 @@
 # pi-web-minimal
 
-Web, code, docs, and URL fetch tools for Pi with a context firewall.
+Web research for Pi agents without trashing the context window.
 
-The goal: give the agent useful evidence, not a landfill. Tools retrieve sources, store raw evidence out of context, then return a compact source-cited brief. Tiny results are compacted without a model call; larger results are distilled with Pi's model. Raw content stays available by `responseId`.
+LLMs research badly: a single `fetch` or search dump can blow 50k tokens of HTML, ads, and nav chrome into context, evicting the actual work. This package wraps Exa + Context7 behind tools that **store raw results out-of-band and return a short, source-cited brief**. The agent gets evidence; you keep your context budget.
 
-No browser session. No curator UI. No video/PDF pipeline. No broad provider stack.
+Suckless by design. No browser session, no curator UI, no PDF/video pipeline, no provider zoo.
+
+## How
+
+Two-stage pipeline per call:
+
+1. **Retrieve** via Exa / Context7 / git clone. Full payload written to disk under a `responseId`.
+2. **Distill** before returning:
+   - Small payloads → deterministic compaction (no model call).
+   - Larger payloads → your active Pi model runs as a context firewall: fixed sections, every claim cites `[S#]`, retrieved text treated as untrusted data. Output is validated; bad runs fall back to raw.
+
+You pay one small model call to avoid pasting 50k tokens of HTML into the main context. Override the distiller with `PI_WEB_MINIMAL_DISTILL_MODEL=provider/model-id`. Set `PI_OFFLINE=1` to skip distillation entirely.
 
 ## Install
 
 ```bash
 pi install npm:pi-web-minimal
-```
-
-## Configure
-
-```bash
 export EXA_API_KEY=exa-...
 export CONTEXT7_API_KEY=ctx7sk-...
-# optional: use a different Pi-registered model for distillation
-export PI_WEB_MINIMAL_DISTILL_MODEL=provider/model-id
 ```
 
 Or `~/.pi/web-search.json`:
 
 ```json
-{
-	"exaApiKey": "exa-...",
-	"context7ApiKey": "ctx7sk-...",
-	"distillModel": "provider/model-id"
-}
+{ "exaApiKey": "...", "context7ApiKey": "...", "distillModel": "provider/model-id" }
 ```
-
-Exa powers web/code/content fallback. Context7 powers docs. Distillation uses the active Pi model unless overridden.
 
 ## Tools
 
-| Tool | Use it for | Default output |
-| --- | --- | --- |
-| `web_search` | current web/source discovery | compact/distilled source-cited brief |
-| `fetch_content` | URLs and GitHub repos | compact/distilled source-cited brief |
-| `code_search` | API docs, examples, debugging evidence | compact/distilled source-cited brief |
-| `documentation_search` | current library docs via Context7 | compact/distilled source-cited brief |
-| `get_search_content` | raw stored evidence by `responseId` | bounded raw content |
+| Tool | For |
+| --- | --- |
+| `web_search` | discover current sources |
+| `code_search` | API/code examples |
+| `documentation_search` | live library docs (Context7) |
+| `fetch_content` | URLs + GitHub repos (shallow-cloned to `/tmp/pi-github-repos`) |
+| `get_search_content` | raw escape hatch by `responseId` when distillation dropped something you needed |
 
-GitHub repos are shallow-cloned to `/tmp/pi-github-repos` for direct filesystem inspection.
-
-## Design contract
-
-- Tool output must earn its place in the agent context.
-- Raw evidence is stored, not dumped.
-- Claims in compact/distilled output cite `[S#]` sources.
-- Retrieved content is untrusted; source instructions are not followed.
-- `get_search_content` is the raw audit/escape hatch.
-- Quality is measured by agent evals: task success, context reduction, citation validity, no fallbacks, injection resistance, and avoiding redundant follow-up calls.
-
-See `docs/agent-tool-audit.md` for details.
-
-## Development
+## Dev
 
 ```bash
-bun install
-bun test
-bun run typecheck
-bun run check
-bun pm pack --dry-run
-PI_OFFLINE=1 bunx --bun pi --no-extensions -e . --list-models >/tmp/pi-web-minimal-pi-load.out
+bun test && bun run typecheck && bun run check
 ```
 
-Live checks:
-
-```bash
-RUN_LIVE_TESTS=1 bun test live.test.ts
-RUN_AGENT_EVAL=1 PI_EVAL_MODEL=<provider/model> bun test agent-eval.test.ts
-```
+See `AGENTS.md` for the validation gauntlet, `docs/agent-tool-audit.md` for design notes.
