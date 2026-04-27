@@ -1,8 +1,8 @@
 # pi-web-minimal
 
-Minimal web access for Pi: Exa search/fetch/code retrieval, Context7 documentation lookup, GitHub-aware fetching, and explicit bounded stored-content retrieval.
+Tiny retrieval tools for Pi. Web, code, docs, and URL fetch without turning the agent context into a landfill.
 
-No curator UI. No browser cookies. No Gemini. No Perplexity. No video. No PDF parser. No hidden synthesis layer. Tool outputs are retrieval-first and bounded by default to limit agent context pollution.
+No curator UI. No browser session. No video/PDF pipeline. No model-in-tool synthesis. Just sources in, bounded text out, full-ish content behind an explicit `responseId` pull.
 
 ## Install
 
@@ -10,50 +10,44 @@ No curator UI. No browser cookies. No Gemini. No Perplexity. No video. No PDF pa
 pi install npm:pi-web-minimal
 ```
 
-## Config
+## Configure
 
-Exa is required for `web_search`, `fetch_content` fallback, and `code_search`:
+Use env vars:
 
-```json
-{
-	"exaApiKey": "exa-..."
-}
+```bash
+export EXA_API_KEY=exa-...
+export CONTEXT7_API_KEY=ctx7sk-...
 ```
 
-Context7 is required for `documentation_search`:
+Or `~/.pi/web-search.json`:
 
 ```json
 {
+	"exaApiKey": "exa-...",
 	"context7ApiKey": "ctx7sk-..."
 }
 ```
 
-The config file is `~/.pi/web-search.json`. Environment variables also work:
-
-- `EXA_API_KEY`
-- `CONTEXT7_API_KEY`
+Exa powers `web_search`, `code_search`, and Exa fallback for `fetch_content`.
+Context7 powers `documentation_search`.
 
 ## Tools
 
-### web_search
+| Tool | Use it for | Context behavior |
+| --- | --- | --- |
+| `web_search` | current web/source discovery | bounded snippets + URLs |
+| `fetch_content` | specific URLs and GitHub repos | bounded inline text; stores by URL |
+| `code_search` | API docs, examples, debugging evidence | bounded code/doc evidence |
+| `documentation_search` | current library docs via Context7 | bounded docs context |
+| `get_search_content` | pulling stored content by `responseId` | bounded by default; opt into more |
 
-Retrieval-first Exa search. Returns bounded snippets and source URLs. Use `queries` with varied phrasings for broader research.
+GitHub URLs are shallow-cloned to `/tmp/pi-github-repos`, so Pi can inspect real files with normal filesystem tools.
 
-### fetch_content
+## Why this shape
 
-Fetch URL content. GitHub URLs are shallow-cloned to `/tmp/pi-github-repos` so the agent can inspect real files. Normal pages use deterministic HTTP/readability extraction first, then Exa contents as fallback.
+Agent tools have two jobs: find evidence, and not poison the next turn. This package keeps large retrievals out of the assistant message until the agent explicitly asks for them.
 
-### code_search
-
-Exa search tuned for code examples, API docs, and debugging context.
-
-### documentation_search
-
-Context7 documentation lookup. Provide `library` + `query`, or `libraryId` + `query` when the exact Context7 ID is known.
-
-### get_search_content
-
-Retrieves stored content from previous tool calls by `responseId`. Output is bounded by default; pass `maxCharacters` deliberately when more content is needed.
+See `docs/agent-tool-audit.md` for the design notes.
 
 ## Development
 
@@ -72,5 +66,3 @@ Live checks:
 RUN_LIVE_TESTS=1 bun test live.test.ts
 RUN_AGENT_EVAL=1 PI_EVAL_MODEL=<provider/model> bun test agent-eval.test.ts
 ```
-
-See `docs/agent-tool-audit.md` for the anti-context-pollution and autodiscovery review rubric.
