@@ -2,7 +2,7 @@
 
 A tiny Pi package for web research without context bloat.
 
-It exposes only retrieval tools: `web_search`, `fetch_content`, `code_search`, `documentation_search`, and `get_search_content`. Keep it boring. Do not add UI workflows, browser automation, video analysis, broad provider fallbacks, or model-in-tool synthesis.
+It exposes only retrieval + distillation tools: `web_search`, `fetch_content`, `code_search`, `documentation_search`, and `get_search_content`. Keep it boring. Do not add UI workflows, browser automation, video analysis, or broad provider fallbacks. Raw evidence must remain stored and retrievable; `get_search_content` stays deterministic and raw.
 
 ## Bun-first workflow
 

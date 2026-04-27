@@ -7,11 +7,14 @@ export const CONFIG_PATH = join(homedir(), ".pi", "web-search.json");
 const env = process.env as {
 	EXA_API_KEY?: string;
 	CONTEXT7_API_KEY?: string;
+	PI_OFFLINE?: string;
+	PI_WEB_MINIMAL_DISTILL_MODEL?: string;
 };
 
 interface WebConfig {
 	exaApiKey?: unknown;
 	context7ApiKey?: unknown;
+	distillModel?: unknown;
 }
 
 let cachedConfig: WebConfig | null = null;
@@ -47,6 +50,17 @@ export function getContext7ApiKey(): string | null {
 	return (
 		cleanKey(env.CONTEXT7_API_KEY) ?? cleanKey(loadConfig().context7ApiKey)
 	);
+}
+
+export function getDistillModelOverride(): string | null {
+	return (
+		cleanKey(env.PI_WEB_MINIMAL_DISTILL_MODEL) ??
+		cleanKey(loadConfig().distillModel)
+	);
+}
+
+export function isOfflineMode(): boolean {
+	return env.PI_OFFLINE === "1";
 }
 
 export function requireExaApiKey(): string {

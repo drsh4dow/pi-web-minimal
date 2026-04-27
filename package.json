@@ -1,7 +1,7 @@
 {
 	"name": "pi-web-minimal",
 	"version": "0.1.0",
-	"description": "Minimal web, code, and documentation access tools for Pi",
+	"description": "Minimal web, code, and documentation retrieval distillation tools for Pi",
 	"type": "module",
 	"exports": "./index.ts",
 	"author": "drsh4dow <daniel.morettiv@gmail.com> (https://github.com/drsh4dow)",
@@ -29,6 +29,7 @@
 		"exa",
 		"context7",
 		"context-engineering",
+		"distillation",
 		"minimal",
 		"extension"
 	],

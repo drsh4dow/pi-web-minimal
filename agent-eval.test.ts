@@ -88,6 +88,16 @@ function requireEnv(name: "PI_EVAL_MODEL"): string {
 	return value;
 }
 
+function sumJsonNumbers(text: string, key: string): number {
+	let total = 0;
+	for (const match of text.matchAll(
+		new RegExp(`"${key}"\\s*:\\s*(\\d+)`, "g"),
+	)) {
+		total += Number(match[1]);
+	}
+	return total;
+}
+
 describe("real Pi agent eval", () => {
 	agentEvalTest(
 		"completes coding/research workflows under a response budget",
@@ -164,25 +174,50 @@ describe("real Pi agent eval", () => {
 					(tool) =>
 						!new RegExp(`"toolName"\\s*:\\s*"${tool}"`).test(sessionText),
 				);
-				const outputChars = stdout.length + stderr.length;
+				const processOutputChars = stdout.length + stderr.length;
+				const distilledCount = (
+					sessionText.match(/"mode"\s*:\s*"distilled"/g) ?? []
+				).length;
+				const compactCount = (
+					sessionText.match(/"mode"\s*:\s*"compact"/g) ?? []
+				).length;
+				const fallbackCount = (
+					sessionText.match(/"mode"\s*:\s*"fallback"/g) ?? []
+				).length;
+				const rawChars = sumJsonNumbers(sessionText, "rawChars");
+				const firewallOutputChars = sumJsonNumbers(sessionText, "outputChars");
+				const firewallCount = distilledCount + compactCount;
+				const sizeOk =
+					rawChars === 0 ||
+					(rawChars <= 1600
+						? firewallOutputChars <= Math.max(300, rawChars * 2)
+						: firewallOutputChars < rawChars);
 				const passed =
 					exitCode === 0 &&
 					stdout.includes(task.marker) &&
 					missingTools.length === 0 &&
-					outputChars <= maxOutputChars;
+					firewallCount > 0 &&
+					sizeOk &&
+					processOutputChars <= maxOutputChars;
 
 				report.push({
 					name: task.name,
 					exitCode,
-					outputChars,
+					processOutputChars,
 					elapsedMs: Date.now() - started,
 					markerFound: stdout.includes(task.marker),
 					missingTools,
+					distilledCount,
+					compactCount,
+					fallbackCount,
+					rawChars,
+					firewallOutputChars,
+					sizeOk,
 					passed,
 				});
 				if (!passed) {
 					failures.push(
-						`${task.name}: exit=${exitCode}, marker=${stdout.includes(task.marker)}, missingTools=${missingTools.join(",") || "none"}, outputChars=${outputChars}`,
+						`${task.name}: exit=${exitCode}, marker=${stdout.includes(task.marker)}, missingTools=${missingTools.join(",") || "none"}, distilled=${distilledCount}, compact=${compactCount}, sizeOk=${sizeOk}, processOutputChars=${processOutputChars}`,
 					);
 				}
 			}

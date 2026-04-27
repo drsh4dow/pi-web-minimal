@@ -16,6 +16,7 @@ export interface StoredWebData {
 	type: "search" | "fetch" | "code" | "documentation";
 	timestamp: number;
 	items: StoredItem[];
+	synthesis?: string;
 }
 
 const stored = new Map<string, StoredWebData>();
@@ -57,6 +58,7 @@ function isStoredWebData(value: unknown): value is StoredWebData {
 		type?: unknown;
 		timestamp?: unknown;
 		items?: unknown;
+		synthesis?: unknown;
 	};
 	return (
 		typeof data.id === "string" &&
@@ -66,7 +68,8 @@ function isStoredWebData(value: unknown): value is StoredWebData {
 			data.type === "documentation") &&
 		typeof data.timestamp === "number" &&
 		Array.isArray(data.items) &&
-		data.items.every(isStoredItem)
+		data.items.every(isStoredItem) &&
+		(data.synthesis === undefined || typeof data.synthesis === "string")
 	);
 }
 

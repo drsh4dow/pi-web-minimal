@@ -2,6 +2,7 @@ import { StringEnum, Type } from "@mariozechner/pi-ai";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { searchDocumentation } from "../lib/context7.ts";
+import { distillRetrieval } from "../lib/distill.ts";
 import { formatExaResults, searchCode, searchWeb } from "../lib/exa.ts";
 import { fetchMany } from "../lib/fetch.ts";
 import {
@@ -94,7 +95,11 @@ function store(pi: ExtensionAPI, data: StoredWebData): void {
 }
 
 function responseNotice(responseId: string, selector: string): string {
-	return `\n\n---\nresponseId: ${responseId}\nUse get_search_content({ responseId: "${responseId}", ${selector} }) for more stored content. It returns up to ${formatChars(CONTENT_RETRIEVAL_CHARS)} by default; pass maxCharacters when you need a different bound.`;
+	return `\n\n---\nresponseId: ${responseId}\nUse get_search_content({ responseId: "${responseId}", ${selector} }) for raw stored content. It returns up to ${formatChars(CONTENT_RETRIEVAL_CHARS)} by default; pass maxCharacters when you need a different bound.`;
+}
+
+function fallbackNotice(reason: string | undefined): string {
+	return `[Distillation skipped: ${reason ?? "unavailable"}]\n\n`;
 }
 
 function renderSimpleCall(
@@ -125,7 +130,7 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 		name: "web_search",
 		label: "Web Search",
 		description:
-			"Search the web with Exa. Returns bounded retrieval snippets and source URLs, not model synthesis. For research, prefer queries with 2-4 varied angles.",
+			"Search the web with Exa. Returns model-distilled, source-cited findings plus raw stored evidence. For research, prefer queries with 2-4 varied angles.",
 		promptSnippet:
 			"Use for current/web research. Prefer queries:[...] with varied phrasings; fetch promising URLs separately for full content.",
 		parameters: Type.Object({
@@ -153,7 +158,7 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 				}),
 			),
 		}),
-		async execute(_toolCallId, params, signal, onUpdate) {
+		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const queries = normalizeQueries(params);
 			if (queries.length === 0) {
 				return textResult("Error: No query provided.", {
@@ -205,20 +210,41 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 			}
 
 			const responseId = generateId();
+			onUpdate?.({
+				content: [{ type: "text", text: "Distilling search evidence..." }],
+				details: { phase: "distill", progress: 0.95 },
+			});
+			const distilled = await distillRetrieval({
+				ctx,
+				toolName: "web_search",
+				task: queries.join(" | "),
+				sources: items.map((item) => ({
+					title: item.title,
+					query: item.query,
+					content: item.content,
+					error: item.error,
+				})),
+				signal,
+			});
 			store(pi, {
 				id: responseId,
 				type: "search",
 				timestamp: Date.now(),
 				items,
+				...(distilled.text ? { synthesis: distilled.text } : {}),
 			});
 			const output = truncateText(sections.join("\n\n"), SEARCH_PREVIEW_CHARS);
+			const text = distilled.text
+				? distilled.text
+				: `${fallbackNotice(distilled.details.fallbackReason)}${output.text}`;
 			return textResult(
-				`${output.text}${responseNotice(responseId, "queryIndex: 0")}`,
+				`${text}${responseNotice(responseId, "queryIndex: 0")}`,
 				{
 					responseId,
 					queryCount: queries.length,
-					truncated: output.truncated,
-					fullChars: output.fullChars,
+					rawTruncated: output.truncated,
+					rawChars: output.fullChars,
+					distillation: distilled.details,
 				},
 			);
 		},
@@ -236,7 +262,7 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 		name: "code_search",
 		label: "Code Search",
 		description:
-			"Search for code examples, API references, and programming documentation with Exa. Returns bounded evidence, not synthesized advice.",
+			"Search for code examples, API references, and programming documentation with Exa. Returns model-distilled, source-cited findings plus raw stored evidence.",
 		promptSnippet:
 			"Use before coding against unfamiliar APIs or debugging library behavior; ask specific library/API questions.",
 		parameters: Type.Object({
@@ -251,7 +277,7 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 				}),
 			),
 		}),
-		async execute(_toolCallId, params) {
+		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const query = typeof params.query === "string" ? params.query.trim() : "";
 			if (!query)
 				return textResult("Error: No query provided.", {
@@ -264,20 +290,36 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 				);
 				const content = formatExaResults(data.results);
 				const responseId = generateId();
+				onUpdate?.({
+					content: [{ type: "text", text: "Distilling code evidence..." }],
+					details: { phase: "distill", progress: 0.95 },
+				});
+				const distilled = await distillRetrieval({
+					ctx,
+					toolName: "code_search",
+					task: query,
+					sources: [{ title: query, query, content }],
+					signal,
+				});
 				store(pi, {
 					id: responseId,
 					type: "code",
 					timestamp: Date.now(),
 					items: [{ key: "0", title: query, query, content }],
+					...(distilled.text ? { synthesis: distilled.text } : {}),
 				});
 				const output = truncateText(content, SEARCH_PREVIEW_CHARS);
+				const text = distilled.text
+					? distilled.text
+					: `${fallbackNotice(distilled.details.fallbackReason)}${output.text}`;
 				return textResult(
-					`${output.text}${responseNotice(responseId, "queryIndex: 0")}`,
+					`${text}${responseNotice(responseId, "queryIndex: 0")}`,
 					{
 						responseId,
 						query,
-						truncated: output.truncated,
-						fullChars: output.fullChars,
+						rawTruncated: output.truncated,
+						rawChars: output.fullChars,
+						distillation: distilled.details,
 					},
 				);
 			} catch (error) {
@@ -300,7 +342,7 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 		name: "documentation_search",
 		label: "Documentation Search",
 		description:
-			"Search current library/framework documentation through Context7. Provide library plus query, or libraryId plus query.",
+			"Search current library/framework documentation through Context7. Returns model-distilled, source-cited findings plus raw stored evidence.",
 		promptSnippet:
 			"Use for current library/framework documentation. Pass library + a specific query; use libraryId when already known.",
 		parameters: Type.Object({
@@ -316,7 +358,7 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 				description: "Specific documentation question/topic",
 			}),
 		}),
-		async execute(_toolCallId, params) {
+		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const query = typeof params.query === "string" ? params.query.trim() : "";
 			const library =
 				typeof params.library === "string" ? params.library.trim() : undefined;
@@ -331,6 +373,25 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 			try {
 				const docs = await searchDocumentation({ library, libraryId, query });
 				const responseId = generateId();
+				onUpdate?.({
+					content: [
+						{ type: "text", text: "Distilling documentation evidence..." },
+					],
+					details: { phase: "distill", progress: 0.95 },
+				});
+				const distilled = await distillRetrieval({
+					ctx,
+					toolName: "documentation_search",
+					task: `${docs.libraryTitle}: ${query}`,
+					sources: [
+						{
+							title: docs.libraryTitle,
+							query,
+							content: docs.content,
+						},
+					],
+					signal,
+				});
 				store(pi, {
 					id: responseId,
 					type: "documentation",
@@ -343,17 +404,22 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 							content: docs.content,
 						},
 					],
+					...(distilled.text ? { synthesis: distilled.text } : {}),
 				});
 				const output = truncateText(docs.content, SEARCH_PREVIEW_CHARS);
 				const header = `Library: ${docs.libraryTitle}\nLibrary ID: ${docs.libraryId}\n\n`;
+				const text = distilled.text
+					? `${header}${distilled.text}`
+					: `${header}${fallbackNotice(distilled.details.fallbackReason)}${output.text}`;
 				return textResult(
-					`${header}${output.text}${responseNotice(responseId, "queryIndex: 0")}`,
+					`${text}${responseNotice(responseId, "queryIndex: 0")}`,
 					{
 						responseId,
 						libraryId: docs.libraryId,
 						libraryTitle: docs.libraryTitle,
-						truncated: output.truncated,
-						fullChars: output.fullChars,
+						rawTruncated: output.truncated,
+						rawChars: output.fullChars,
+						distillation: distilled.details,
 					},
 				);
 			} catch (error) {
@@ -383,7 +449,7 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 		name: "fetch_content",
 		label: "Fetch Content",
 		description:
-			"Fetch URL content as markdown/text with bounded inline output and stored content for follow-up retrieval. GitHub repos are shallow-cloned locally. Pages use HTTP readability extraction first, then Exa contents fallback.",
+			"Fetch URL content as markdown/text and return model-distilled, source-cited findings plus raw stored content for follow-up retrieval. GitHub repos are shallow-cloned locally. Pages use HTTP readability extraction first, then Exa contents fallback.",
 		promptSnippet:
 			"Use to fetch specific URLs. For GitHub repos, inspect the returned local path with read/bash if more detail is needed.",
 		parameters: Type.Object({
@@ -404,7 +470,7 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 				}),
 			),
 		}),
-		async execute(_toolCallId, params, signal, onUpdate) {
+		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			const urls = normalizeUrls(params);
 			if (urls.length === 0)
 				return textResult("Error: No URL provided.", {
@@ -433,11 +499,28 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 				content: result.content,
 				error: result.error,
 			}));
+			onUpdate?.({
+				content: [{ type: "text", text: "Distilling fetched content..." }],
+				details: { phase: "distill", progress: 0.95 },
+			});
+			const distilled = await distillRetrieval({
+				ctx,
+				toolName: "fetch_content",
+				task: urls.join(" | "),
+				sources: items.map((item) => ({
+					title: item.title,
+					url: item.url,
+					content: item.content,
+					error: item.error,
+				})),
+				signal,
+			});
 			store(pi, {
 				id: responseId,
 				type: "fetch",
 				timestamp: Date.now(),
 				items,
+				...(distilled.text ? { synthesis: distilled.text } : {}),
 			});
 
 			if (results.length === 1) {
@@ -445,19 +528,28 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 				if (!result || result.error) {
 					return textResult(
 						`Error: ${result?.error ?? "Unknown fetch error"}`,
-						{ responseId, error: result?.error, urlCount: 1 },
+						{
+							responseId,
+							error: result?.error,
+							urlCount: 1,
+							distillation: distilled.details,
+						},
 					);
 				}
 				const output = truncateText(result.content, FETCH_INLINE_CHARS);
+				const text = distilled.text
+					? distilled.text
+					: `${fallbackNotice(distilled.details.fallbackReason)}${output.text}`;
 				return textResult(
-					`${output.text}${responseNotice(responseId, "urlIndex: 0")}`,
+					`${text}${responseNotice(responseId, "urlIndex: 0")}`,
 					{
 						responseId,
 						urlCount: 1,
 						title: result.title,
 						source: result.source,
-						truncated: output.truncated,
-						fullChars: output.fullChars,
+						rawTruncated: output.truncated,
+						rawChars: output.fullChars,
+						distillation: distilled.details,
 					},
 				);
 			}
@@ -469,14 +561,15 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 					return `${index}. ${result.title || result.url} (${formatChars(result.content.length)}, ${result.source})`;
 				})
 				.join("\n");
-			return textResult(
-				`${summary}${responseNotice(responseId, "urlIndex: 0")}`,
-				{
-					responseId,
-					urlCount: results.length,
-					successful: results.filter((result) => !result.error).length,
-				},
-			);
+			const text = distilled.text
+				? distilled.text
+				: `${fallbackNotice(distilled.details.fallbackReason)}${summary}`;
+			return textResult(`${text}${responseNotice(responseId, "urlIndex: 0")}`, {
+				responseId,
+				urlCount: results.length,
+				successful: results.filter((result) => !result.error).length,
+				distillation: distilled.details,
+			});
 		},
 		renderCall(args, theme) {
 			const params = args as { url?: string; urls?: string[] };
@@ -492,7 +585,7 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 		name: "get_search_content",
 		label: "Get Search Content",
 		description:
-			"Retrieve bounded stored content from previous pi-web-minimal tool calls by responseId and selector. Use maxCharacters to control how much content enters context.",
+			"Retrieve bounded raw stored content from previous pi-web-minimal tool calls by responseId and selector. Use maxCharacters to control how much content enters context.",
 		promptSnippet:
 			"Use after web_search, fetch_content, code_search, or documentation_search when more stored content is needed; set maxCharacters deliberately.",
 		parameters: Type.Object({
