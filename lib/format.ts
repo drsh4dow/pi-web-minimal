@@ -1,5 +1,6 @@
 export const SEARCH_PREVIEW_CHARS = 8_000;
 export const FETCH_INLINE_CHARS = 30_000;
+export const CONTENT_RETRIEVAL_CHARS = 50_000;
 export const DEFAULT_FETCH_MAX_CHARS = 100_000;
 
 export interface TruncatedText {

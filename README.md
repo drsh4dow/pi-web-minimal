@@ -1,8 +1,8 @@
 # pi-web-minimal
 
-Minimal web access for Pi: Exa search/fetch/code retrieval, Context7 documentation lookup, GitHub-aware fetching, and explicit stored-content retrieval.
+Minimal web access for Pi: Exa search/fetch/code retrieval, Context7 documentation lookup, GitHub-aware fetching, and explicit bounded stored-content retrieval.
 
-No curator UI. No browser cookies. No Gemini. No Perplexity. No video. No PDF parser. No hidden synthesis layer.
+No curator UI. No browser cookies. No Gemini. No Perplexity. No video. No PDF parser. No hidden synthesis layer. Tool outputs are retrieval-first and bounded by default to limit agent context pollution.
 
 ## Install
 
@@ -53,7 +53,7 @@ Context7 documentation lookup. Provide `library` + `query`, or `libraryId` + `qu
 
 ### get_search_content
 
-Retrieves full stored content from previous tool calls by `responseId`.
+Retrieves stored content from previous tool calls by `responseId`. Output is bounded by default; pass `maxCharacters` deliberately when more content is needed.
 
 ## Development
 
@@ -70,4 +70,7 @@ Live checks:
 
 ```bash
 RUN_LIVE_TESTS=1 bun test live.test.ts
+RUN_AGENT_EVAL=1 PI_EVAL_MODEL=<provider/model> bun test agent-eval.test.ts
 ```
+
+See `docs/agent-tool-audit.md` for the anti-context-pollution and autodiscovery review rubric.

@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import webMinimalExtension from "./extensions/web-minimal.ts";
 import { splitDomainFilter } from "./lib/exa.ts";
+import { CONTENT_RETRIEVAL_CHARS } from "./lib/format.ts";
 import { parseGitHubUrl } from "./lib/github.ts";
 import {
 	clearResults,
@@ -21,6 +22,11 @@ function registeredTools() {
 		appendEntry() {},
 	} as unknown as ExtensionAPI);
 	return tools;
+}
+
+function firstText(result: unknown): string {
+	const content = (result as { content?: Array<{ text?: string }> }).content;
+	return content?.[0]?.text ?? "";
 }
 
 describe("pi-web-minimal extension", () => {
@@ -44,13 +50,32 @@ describe("pi-web-minimal extension", () => {
 				"@mozilla/readability"?: string;
 				turndown?: string;
 			};
+			keywords?: string[];
 		};
 		expect(pkg.exports).toBe("./index.ts");
 		expect(pkg.pi?.extensions).toEqual(["./extensions/web-minimal.ts"]);
-		expect(pkg.files).toEqual(["extensions", "lib", "index.ts", "README.md"]);
+		expect(pkg.files).toEqual([
+			"extensions",
+			"lib",
+			"docs",
+			"index.ts",
+			"README.md",
+		]);
+		expect(pkg.keywords).toContain("pi-package");
+		expect(pkg.keywords).toContain("retrieval");
 		expect(pkg.dependencies?.["exa-js"]).toBeDefined();
 		expect(pkg.dependencies?.["@mozilla/readability"]).toBeDefined();
 		expect(pkg.dependencies?.turndown).toBeDefined();
+	});
+
+	test("tool metadata steers toward bounded retrieval", () => {
+		const tools = new Map(registeredTools().map((tool) => [tool.name, tool]));
+		expect(tools.get("web_search")?.description).toContain("bounded");
+		expect(tools.get("fetch_content")?.description).toContain("bounded");
+		expect(tools.get("get_search_content")?.description).toContain("bounded");
+		expect(tools.get("get_search_content")?.promptSnippet).toContain(
+			"maxCharacters",
+		);
 	});
 });
 
@@ -114,5 +139,37 @@ describe("storage", () => {
 		expect(findStoredItem(data, { urlIndex: 9 })).toBe(
 			"URL index 9 out of range.",
 		);
+	});
+
+	test("stored content retrieval is bounded by default", async () => {
+		clearResults();
+		const content = "x".repeat(CONTENT_RETRIEVAL_CHARS + 1000);
+		storeResult({
+			id: "long",
+			type: "fetch",
+			timestamp: Date.now(),
+			items: [{ key: "0", title: "Long", content }],
+		});
+
+		const tool = registeredTools().find(
+			(candidate) => candidate.name === "get_search_content",
+		);
+		expect(tool).toBeDefined();
+		const result = await tool?.execute(
+			"call",
+			{ responseId: "long", queryIndex: 0 },
+			undefined,
+			undefined,
+			{} as never,
+		);
+		const text = firstText(result);
+		expect(text.length).toBeLessThan(content.length);
+		expect(text).toContain("[Content truncated]");
+		expect(result?.details).toMatchObject({
+			responseId: "long",
+			truncated: true,
+			chars: content.length,
+			returnedChars: CONTENT_RETRIEVAL_CHARS,
+		});
 	});
 });

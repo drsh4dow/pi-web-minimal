@@ -17,6 +17,7 @@
 		"check": "biome check .",
 		"check:fix": "biome check --write .",
 		"test": "bun test index.test.ts",
+		"test:agent": "RUN_AGENT_EVAL=1 bun test agent-eval.test.ts",
 		"test:live": "RUN_LIVE_TESTS=1 bun test live.test.ts",
 		"typecheck": "bunx tsc --noEmit"
 	},
@@ -24,14 +25,17 @@
 		"pi-package",
 		"pi",
 		"web-search",
+		"retrieval",
 		"exa",
 		"context7",
+		"context-engineering",
 		"minimal",
 		"extension"
 	],
 	"files": [
 		"extensions",
 		"lib",
+		"docs",
 		"index.ts",
 		"README.md"
 	],

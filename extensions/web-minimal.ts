@@ -5,6 +5,7 @@ import { searchDocumentation } from "../lib/context7.ts";
 import { formatExaResults, searchCode, searchWeb } from "../lib/exa.ts";
 import { fetchMany } from "../lib/fetch.ts";
 import {
+	CONTENT_RETRIEVAL_CHARS,
 	FETCH_INLINE_CHARS,
 	formatChars,
 	SEARCH_PREVIEW_CHARS,
@@ -93,7 +94,7 @@ function store(pi: ExtensionAPI, data: StoredWebData): void {
 }
 
 function responseNotice(responseId: string, selector: string): string {
-	return `\n\n---\nresponseId: ${responseId}\nUse get_search_content({ responseId: "${responseId}", ${selector} }) for full stored content.`;
+	return `\n\n---\nresponseId: ${responseId}\nUse get_search_content({ responseId: "${responseId}", ${selector} }) for more stored content. It returns up to ${formatChars(CONTENT_RETRIEVAL_CHARS)} by default; pass maxCharacters when you need a different bound.`;
 }
 
 function renderSimpleCall(
@@ -382,7 +383,7 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 		name: "fetch_content",
 		label: "Fetch Content",
 		description:
-			"Fetch URL content as markdown/text. GitHub repos are shallow-cloned locally. Pages use HTTP readability extraction first, then Exa contents fallback.",
+			"Fetch URL content as markdown/text with bounded inline output and stored content for follow-up retrieval. GitHub repos are shallow-cloned locally. Pages use HTTP readability extraction first, then Exa contents fallback.",
 		promptSnippet:
 			"Use to fetch specific URLs. For GitHub repos, inspect the returned local path with read/bash if more detail is needed.",
 		parameters: Type.Object({
@@ -491,9 +492,9 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 		name: "get_search_content",
 		label: "Get Search Content",
 		description:
-			"Retrieve full stored content from previous pi-web-minimal tool calls.",
+			"Retrieve bounded stored content from previous pi-web-minimal tool calls by responseId and selector. Use maxCharacters to control how much content enters context.",
 		promptSnippet:
-			"Use after web_search, fetch_content, code_search, or documentation_search when full stored content is needed.",
+			"Use after web_search, fetch_content, code_search, or documentation_search when more stored content is needed; set maxCharacters deliberately.",
 		parameters: Type.Object({
 			responseId: Type.String({ description: "Stored response id" }),
 			query: Type.Optional(
@@ -507,6 +508,14 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 			),
 			urlIndex: Type.Optional(
 				Type.Number({ description: "Get content by URL index" }),
+			),
+			maxCharacters: Type.Optional(
+				Type.Number({
+					minimum: 1000,
+					maximum: 200000,
+					description:
+						"Maximum characters to return (default 50000, max 200000)",
+				}),
 			),
 		}),
 		async execute(_toolCallId, params) {
@@ -535,12 +544,21 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 					error: item.error,
 					responseId: params.responseId,
 				});
-			return textResult(item.content, {
+			const maxCharacters = normalizeNumber(
+				params.maxCharacters,
+				CONTENT_RETRIEVAL_CHARS,
+				1000,
+				200000,
+			);
+			const output = truncateText(item.content, maxCharacters);
+			return textResult(output.text, {
 				responseId: params.responseId,
 				title: item.title,
 				url: item.url,
 				query: item.query,
 				chars: item.content.length,
+				returnedChars: Math.min(item.content.length, maxCharacters),
+				truncated: output.truncated,
 			});
 		},
 		renderCall(args, theme) {
