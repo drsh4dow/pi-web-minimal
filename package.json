@@ -1,0 +1,68 @@
+{
+	"name": "pi-web-minimal",
+	"version": "0.1.0",
+	"description": "Minimal web, code, and documentation access tools for Pi",
+	"type": "module",
+	"exports": "./index.ts",
+	"author": "drsh4dow <daniel.morettiv@gmail.com> (https://github.com/drsh4dow)",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/drsh4dow/pi-web-minimal.git"
+	},
+	"bugs": {
+		"url": "https://github.com/drsh4dow/pi-web-minimal/issues"
+	},
+	"homepage": "https://github.com/drsh4dow/pi-web-minimal#readme",
+	"scripts": {
+		"check": "biome check .",
+		"check:fix": "biome check --write .",
+		"test": "bun test index.test.ts",
+		"test:live": "RUN_LIVE_TESTS=1 bun test live.test.ts",
+		"typecheck": "bunx tsc --noEmit"
+	},
+	"keywords": [
+		"pi-package",
+		"pi",
+		"web-search",
+		"exa",
+		"context7",
+		"minimal",
+		"extension"
+	],
+	"files": [
+		"extensions",
+		"lib",
+		"index.ts",
+		"README.md"
+	],
+	"pi": {
+		"extensions": [
+			"./extensions/web-minimal.ts"
+		]
+	},
+	"dependencies": {
+		"@mozilla/readability": "^0.6.0",
+		"exa-js": "^2.12.1",
+		"linkedom": "^0.18.12",
+		"p-limit": "^7.3.0",
+		"turndown": "^7.2.4"
+	},
+	"devDependencies": {
+		"@biomejs/biome": "^2.4.13",
+		"@mariozechner/pi-ai": "^0.70.2",
+		"@mariozechner/pi-coding-agent": "^0.70.2",
+		"@mariozechner/pi-tui": "^0.70.2",
+		"@types/bun": "^1.3.13",
+		"@types/turndown": "^5.0.5",
+		"typescript": "^6.0.3"
+	},
+	"peerDependencies": {
+		"@mariozechner/pi-ai": "*",
+		"@mariozechner/pi-coding-agent": "*",
+		"@mariozechner/pi-tui": "*"
+	},
+	"trustedDependencies": [
+		"koffi",
+		"protobufjs"
+	]
+}
