@@ -10,12 +10,13 @@ Suckless by design. No browser session, no curator UI, no PDF/video pipeline, no
 
 Two-stage pipeline per call:
 
-1. **Retrieve** via Exa / Context7 / git clone. Full payload written to disk under a `responseId`.
-2. **Distill** before returning:
-   - Small payloads → deterministic compaction (no model call).
-   - Larger payloads → your active Pi model runs as a context firewall: fixed sections, every claim cites `[S#]`, retrieved text treated as untrusted data. Output is validated; bad runs fall back to raw.
+1. **Retrieve** via Exa / Context7 / git clone. Raw evidence is stored out-of-band under a `responseId`; session persistence is bounded so long runs do not bloat context/history.
+2. **Distill/extract** before returning:
+   - Small payloads → deterministic extractive compaction (no model call).
+   - Larger payloads → your active Pi model runs as a context firewall over ranked snippets: fixed sections, every finding cites `[S#]`, retrieved text treated as untrusted data. Output is validated.
+   - If model distillation is unavailable, the fallback is a bounded extractive report, not a first-N raw dump.
 
-You pay one small model call to avoid pasting 50k tokens of HTML into the main context. Override the distiller with `PI_WEB_MINIMAL_DISTILL_MODEL=provider/model-id`. Set `PI_OFFLINE=1` to skip distillation entirely.
+You pay one small model call to avoid pasting 50k tokens of HTML into the main context. Override the distiller with `PI_WEB_MINIMAL_DISTILL_MODEL=provider/model-id`. Set `PI_OFFLINE=1` to skip model distillation and use deterministic extraction.
 
 ## Install
 
@@ -39,7 +40,7 @@ Or `~/.pi/web-search.json`:
 | `code_search` | API/code examples |
 | `documentation_search` | live library docs (Context7) |
 | `fetch_content` | URLs + GitHub repos (shallow-cloned to `/tmp/pi-github-repos`) |
-| `get_search_content` | raw escape hatch by `responseId` when distillation dropped something you needed |
+| `get_search_content` | raw escape hatch by `responseId` with `sourceIndex`/`urlIndex`, `offset`, `section`, or `textSearch` selectors when distillation dropped something you needed |
 
 ## Dev
 

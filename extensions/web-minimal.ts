@@ -3,18 +3,23 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Text } from "@mariozechner/pi-tui";
 import { searchDocumentation } from "../lib/context7.ts";
 import { distillRetrieval } from "../lib/distill.ts";
-import { formatExaResults, searchCode, searchWeb } from "../lib/exa.ts";
+import { normalizeUrlForDedup } from "../lib/evidence.ts";
+import {
+	type ExaResult,
+	formatExaResult,
+	searchCode,
+	searchWeb,
+} from "../lib/exa.ts";
 import { fetchMany } from "../lib/fetch.ts";
 import {
 	CONTENT_RETRIEVAL_CHARS,
-	FALLBACK_PREVIEW_CHARS,
-	formatChars,
 	SEARCH_PREVIEW_CHARS,
 	truncateText,
 } from "../lib/format.ts";
 import { clearCloneCache } from "../lib/github.ts";
 import {
 	clearResults,
+	compactForSession,
 	findStoredItem,
 	generateId,
 	getResult,
@@ -91,7 +96,7 @@ function errorText(error: unknown): string {
 
 function store(pi: ExtensionAPI, data: StoredWebData): void {
 	storeResult(data);
-	pi.appendEntry("web-minimal-results", data);
+	pi.appendEntry("web-minimal-results", compactForSession(data));
 }
 
 function responseNotice(responseId: string, selector: string): string {
@@ -100,6 +105,128 @@ function responseNotice(responseId: string, selector: string): string {
 
 function fallbackNotice(reason: string | undefined): string {
 	return `[Distillation fallback: ${reason ?? "unavailable"}]\n\n`;
+}
+
+function rawSelectorFor(
+	item: StoredItem | undefined,
+	fallback = "sourceIndex: 0",
+): string {
+	if (!item) return fallback;
+	if (item.url) return "urlIndex: 0";
+	if (item.query) return "sourceIndex: 0";
+	return fallback;
+}
+
+function exaItemsFromResults(
+	results: ExaResult[],
+	query: string,
+	seen: Set<string>,
+): StoredItem[] {
+	const items: StoredItem[] = [];
+	for (const result of results) {
+		const dedupKey =
+			normalizeUrlForDedup(result.url) ??
+			`${result.title ?? ""}:${result.text ?? result.highlights?.join(" ") ?? ""}`;
+		if (seen.has(dedupKey)) continue;
+		seen.add(dedupKey);
+		const content = formatExaResult(result, items.length);
+		items.push({
+			key: "",
+			title: result.title || result.url || query,
+			url: result.url,
+			query,
+			content,
+		});
+	}
+	return items;
+}
+
+function headingLevel(line: string): number {
+	return line.match(/^(#{1,6})\s+/)?.[1]?.length ?? 0;
+}
+
+function sectionRange(
+	content: string,
+	wanted: string,
+): { start: number; end: number } | string {
+	const lowerWanted = wanted.trim().toLowerCase();
+	for (const match of content.matchAll(/^#{1,6}\s+(.+)$/gm)) {
+		const title = match[1]?.trim().toLowerCase() ?? "";
+		if (!title.includes(lowerWanted)) continue;
+		const start = match.index ?? 0;
+		const level = headingLevel(match[0]);
+		let end = content.length;
+		const rest = content.slice(start + match[0].length);
+		for (const next of rest.matchAll(/^#{1,6}\s+(.+)$/gm)) {
+			if (headingLevel(next[0]) <= level) {
+				end = start + match[0].length + (next.index ?? 0);
+				break;
+			}
+		}
+		return { start, end };
+	}
+	return `Section "${wanted}" not found.`;
+}
+
+function searchRange(
+	content: string,
+	textSearch: string,
+	occurrence: number,
+	contextCharacters: number,
+): { start: number; end: number } | string {
+	const needle = textSearch.trim().toLowerCase();
+	if (!needle) return "textSearch cannot be empty.";
+	let found = -1;
+	let from = 0;
+	for (let count = 0; count < occurrence; count++) {
+		found = content.toLowerCase().indexOf(needle, from);
+		if (found < 0) return `Text "${textSearch}" not found.`;
+		from = found + needle.length;
+	}
+	return {
+		start: Math.max(0, found - contextCharacters),
+		end: Math.min(content.length, found + needle.length + contextCharacters),
+	};
+}
+
+function selectRawContent(
+	content: string,
+	params: {
+		offset?: unknown;
+		section?: unknown;
+		textSearch?: unknown;
+		occurrence?: unknown;
+		contextCharacters?: unknown;
+	},
+	maxCharacters: number,
+): { text: string; start: number; end: number; truncated: boolean } | string {
+	let start = normalizeNumber(params.offset, 0, 0, content.length);
+	let end = content.length;
+	if (typeof params.section === "string" && params.section.trim()) {
+		const range = sectionRange(content, params.section);
+		if (typeof range === "string") return range;
+		start = range.start;
+		end = range.end;
+	}
+	if (typeof params.textSearch === "string" && params.textSearch.trim()) {
+		const range = searchRange(
+			content,
+			params.textSearch,
+			normalizeNumber(params.occurrence, 1, 1, 100),
+			normalizeNumber(params.contextCharacters, 2_000, 200, 20_000),
+		);
+		if (typeof range === "string") return range;
+		start = range.start;
+		end = range.end;
+	}
+	const raw = content.slice(start, end);
+	const output = truncateText(raw, maxCharacters);
+	return {
+		text: output.text,
+		start,
+		end: start + Math.min(raw.length, maxCharacters),
+		truncated: output.truncated || end < content.length,
+	};
 }
 
 function renderSimpleCall(
@@ -167,7 +294,7 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 			}
 
 			const items: StoredItem[] = [];
-			const sections: string[] = [];
+			const seen = new Set<string>();
 			for (let index = 0; index < queries.length; index++) {
 				if (signal?.aborted) throw new Error("Aborted");
 				onUpdate?.({
@@ -180,32 +307,26 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 					details: { phase: "search", progress: index / queries.length },
 				});
 				try {
-					const data = await searchWeb(queries[index] as string, {
+					const query = queries[index] as string;
+					const data = await searchWeb(query, {
 						numResults: normalizeNumber(params.numResults, 5, 1, 20),
 						domainFilter: normalizeDomainFilter(params.domainFilter),
 						recencyFilter: normalizeRecency(params.recencyFilter),
 						signal,
 					});
-					const content = formatExaResults(data.results);
-					items.push({
-						key: String(index),
-						title: queries[index] as string,
-						query: queries[index] as string,
-						content,
-					});
-					sections.push(`## Query ${index}: ${queries[index]}\n\n${content}`);
+					for (const item of exaItemsFromResults(data.results, query, seen)) {
+						item.key = String(items.length);
+						items.push(item);
+					}
 				} catch (error) {
 					const message = errorText(error);
 					items.push({
-						key: String(index),
+						key: String(items.length),
 						title: queries[index] as string,
 						query: queries[index] as string,
 						content: "",
 						error: message,
 					});
-					sections.push(
-						`## Query ${index}: ${queries[index]}\n\nError: ${message}`,
-					);
 				}
 			}
 
@@ -220,6 +341,7 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 				task: queries.join(" | "),
 				sources: items.map((item) => ({
 					title: item.title,
+					url: item.url,
 					query: item.query,
 					content: item.content,
 					error: item.error,
@@ -233,20 +355,19 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 				items,
 				...(distilled.text ? { synthesis: distilled.text } : {}),
 			});
-			const output = truncateText(
-				sections.join("\n\n"),
-				FALLBACK_PREVIEW_CHARS,
-			);
-			const text = distilled.text
-				? distilled.text
-				: `${fallbackNotice(distilled.details.fallbackReason)}${output.text}`;
+			const text = distilled.details.fallbackReason
+				? `${fallbackNotice(distilled.details.fallbackReason)}${distilled.text ?? ""}`
+				: (distilled.text ?? "");
 			return textResult(
-				`${text}${responseNotice(responseId, "queryIndex: 0")}`,
+				`${text}${responseNotice(responseId, rawSelectorFor(items[0]))}`,
 				{
 					responseId,
 					queryCount: queries.length,
-					rawTruncated: output.truncated,
-					rawChars: output.fullChars,
+					sourceCount: items.length,
+					rawChars: items.reduce(
+						(total, item) => total + item.content.length,
+						0,
+					),
 					distillation: distilled.details,
 				},
 			);
@@ -291,7 +412,18 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 					query,
 					normalizeNumber(params.maxTokens, SEARCH_PREVIEW_CHARS, 1000, 50000),
 				);
-				const content = formatExaResults(data.results);
+				const seen = new Set<string>();
+				const items = exaItemsFromResults(data.results, query, seen).map(
+					(item, index) => ({ ...item, key: String(index) }),
+				);
+				if (items.length === 0) {
+					items.push({
+						key: "0",
+						title: query,
+						query,
+						content: "No results found.",
+					});
+				}
 				const responseId = generateId();
 				onUpdate?.({
 					content: [{ type: "text", text: "Distilling code evidence..." }],
@@ -301,27 +433,35 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 					ctx,
 					toolName: "code_search",
 					task: query,
-					sources: [{ title: query, query, content }],
+					sources: items.map((item) => ({
+						title: item.title,
+						url: item.url,
+						query: item.query,
+						content: item.content,
+						error: item.error,
+					})),
 					signal,
 				});
 				store(pi, {
 					id: responseId,
 					type: "code",
 					timestamp: Date.now(),
-					items: [{ key: "0", title: query, query, content }],
+					items,
 					...(distilled.text ? { synthesis: distilled.text } : {}),
 				});
-				const output = truncateText(content, FALLBACK_PREVIEW_CHARS);
-				const text = distilled.text
-					? distilled.text
-					: `${fallbackNotice(distilled.details.fallbackReason)}${output.text}`;
+				const text = distilled.details.fallbackReason
+					? `${fallbackNotice(distilled.details.fallbackReason)}${distilled.text ?? ""}`
+					: (distilled.text ?? "");
 				return textResult(
-					`${text}${responseNotice(responseId, "queryIndex: 0")}`,
+					`${text}${responseNotice(responseId, rawSelectorFor(items[0]))}`,
 					{
 						responseId,
 						query,
-						rawTruncated: output.truncated,
-						rawChars: output.fullChars,
+						sourceCount: items.length,
+						rawChars: items.reduce(
+							(total, item) => total + item.content.length,
+							0,
+						),
 						distillation: distilled.details,
 					},
 				);
@@ -409,18 +549,17 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 					],
 					...(distilled.text ? { synthesis: distilled.text } : {}),
 				});
-				const output = truncateText(docs.content, FALLBACK_PREVIEW_CHARS);
-				const text = distilled.text
-					? distilled.text
-					: `${fallbackNotice(distilled.details.fallbackReason)}${output.text}`;
+				const text = distilled.details.fallbackReason
+					? `${fallbackNotice(distilled.details.fallbackReason)}${distilled.text ?? ""}`
+					: (distilled.text ?? "");
 				return textResult(
-					`${text}${responseNotice(responseId, "queryIndex: 0")}`,
+					`${text}${responseNotice(responseId, "sourceIndex: 0")}`,
 					{
 						responseId,
 						libraryId: docs.libraryId,
 						libraryTitle: docs.libraryTitle,
-						rawTruncated: output.truncated,
-						rawChars: output.fullChars,
+						candidates: docs.candidates,
+						rawChars: docs.content.length,
 						distillation: distilled.details,
 					},
 				);
@@ -490,7 +629,10 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 			);
 			const results = await fetchMany(
 				urls,
-				{ maxCharacters, forceClone: params.forceClone === true },
+				{
+					maxCharacters,
+					forceClone: params.forceClone === true,
+				},
 				signal,
 			);
 			const responseId = generateId();
@@ -538,10 +680,9 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 						},
 					);
 				}
-				const output = truncateText(result.content, FALLBACK_PREVIEW_CHARS);
-				const text = distilled.text
-					? distilled.text
-					: `${fallbackNotice(distilled.details.fallbackReason)}${output.text}`;
+				const text = distilled.details.fallbackReason
+					? `${fallbackNotice(distilled.details.fallbackReason)}${distilled.text ?? ""}`
+					: (distilled.text ?? "");
 				return textResult(
 					`${text}${responseNotice(responseId, "urlIndex: 0")}`,
 					{
@@ -549,27 +690,23 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 						urlCount: 1,
 						title: result.title,
 						source: result.source,
-						rawTruncated: output.truncated,
-						rawChars: output.fullChars,
+						rawChars: result.content.length,
 						distillation: distilled.details,
 					},
 				);
 			}
 
-			const summary = results
-				.map((result, index) => {
-					if (result.error)
-						return `${index}. ${result.url}: Error - ${result.error}`;
-					return `${index}. ${result.title || result.url} (${formatChars(result.content.length)}, ${result.source})`;
-				})
-				.join("\n");
-			const text = distilled.text
-				? distilled.text
-				: `${fallbackNotice(distilled.details.fallbackReason)}${summary}`;
+			const text = distilled.details.fallbackReason
+				? `${fallbackNotice(distilled.details.fallbackReason)}${distilled.text ?? ""}`
+				: (distilled.text ?? "");
 			return textResult(`${text}${responseNotice(responseId, "urlIndex: 0")}`, {
 				responseId,
 				urlCount: results.length,
 				successful: results.filter((result) => !result.error).length,
+				rawChars: results.reduce(
+					(total, result) => total + result.content.length,
+					0,
+				),
 				distillation: distilled.details,
 			});
 		},
@@ -595,6 +732,9 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 			query: Type.Optional(
 				Type.String({ description: "Get content for exact query" }),
 			),
+			sourceIndex: Type.Optional(
+				Type.Number({ description: "Get content by stored source index" }),
+			),
 			queryIndex: Type.Optional(
 				Type.Number({ description: "Get content by query/result index" }),
 			),
@@ -604,12 +744,29 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 			urlIndex: Type.Optional(
 				Type.Number({ description: "Get content by URL index" }),
 			),
+			offset: Type.Optional(
+				Type.Number({ description: "Character offset to start from" }),
+			),
+			section: Type.Optional(
+				Type.String({ description: "Markdown heading text to retrieve" }),
+			),
+			textSearch: Type.Optional(
+				Type.String({ description: "Text to search within stored content" }),
+			),
+			occurrence: Type.Optional(
+				Type.Number({ description: "1-based textSearch occurrence" }),
+			),
+			contextCharacters: Type.Optional(
+				Type.Number({
+					description: "Characters around textSearch match (default 2000)",
+				}),
+			),
 			maxCharacters: Type.Optional(
 				Type.Number({
 					minimum: 1000,
-					maximum: 200000,
+					maximum: 100000,
 					description:
-						"Maximum characters to return (default 50000, max 200000)",
+						"Maximum characters to return (default 12000, max 100000)",
 				}),
 			),
 		}),
@@ -622,6 +779,10 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 				);
 			const item = findStoredItem(data, {
 				query: params.query,
+				sourceIndex:
+					typeof params.sourceIndex === "number"
+						? Math.floor(params.sourceIndex)
+						: undefined,
 				queryIndex:
 					typeof params.queryIndex === "number"
 						? Math.floor(params.queryIndex)
@@ -643,17 +804,26 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 				params.maxCharacters,
 				CONTENT_RETRIEVAL_CHARS,
 				1000,
-				200000,
+				100000,
 			);
-			const output = truncateText(item.content, maxCharacters);
-			return textResult(output.text, {
+			const selected = selectRawContent(item.content, params, maxCharacters);
+			if (typeof selected === "string") {
+				return textResult(selected, {
+					error: selected,
+					responseId: params.responseId,
+				});
+			}
+			return textResult(selected.text, {
 				responseId: params.responseId,
 				title: item.title,
 				url: item.url,
 				query: item.query,
-				chars: item.content.length,
-				returnedChars: Math.min(item.content.length, maxCharacters),
-				truncated: output.truncated,
+				chars: item.contentChars ?? item.content.length,
+				availableChars: item.content.length,
+				start: selected.start,
+				end: selected.end,
+				returnedChars: selected.text.length,
+				truncated: selected.truncated,
 			});
 		},
 		renderCall(args, theme) {

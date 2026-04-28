@@ -1,6 +1,8 @@
 import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
 
 const CACHE_TTL_MS = 60 * 60 * 1000;
+const SESSION_ITEM_CHARS = 40_000;
+const SESSION_TOTAL_CHARS = 160_000;
 
 export interface StoredItem {
 	key: string;
@@ -8,6 +10,7 @@ export interface StoredItem {
 	url?: string;
 	query?: string;
 	content: string;
+	contentChars?: number;
 	error?: string | null;
 }
 
@@ -17,6 +20,7 @@ export interface StoredWebData {
 	timestamp: number;
 	items: StoredItem[];
 	synthesis?: string;
+	sessionTruncated?: boolean;
 }
 
 const stored = new Map<string, StoredWebData>();
@@ -37,17 +41,48 @@ export function clearResults(): void {
 	stored.clear();
 }
 
+function truncateForSession(content: string, remaining: number): string {
+	const maxChars = Math.max(0, Math.min(SESSION_ITEM_CHARS, remaining));
+	if (content.length <= maxChars) return content;
+	return `${content.slice(0, Math.max(0, maxChars))}\n\n[Session-stored content truncated; refetch for complete raw evidence]`;
+}
+
+export function compactForSession(data: StoredWebData): StoredWebData {
+	let remaining = SESSION_TOTAL_CHARS;
+	let sessionTruncated = false;
+	const items = data.items.map((item) => {
+		const originalChars = item.contentChars ?? item.content.length;
+		const content = truncateForSession(item.content, remaining);
+		remaining -= content.length;
+		if (content.length < item.content.length) sessionTruncated = true;
+		return {
+			...item,
+			content,
+			contentChars: originalChars,
+		};
+	});
+	return {
+		...data,
+		items,
+		...(data.sessionTruncated || sessionTruncated
+			? { sessionTruncated: true }
+			: {}),
+	};
+}
+
 function isStoredItem(value: unknown): value is StoredItem {
 	if (!value || typeof value !== "object") return false;
 	const item = value as {
 		key?: unknown;
 		title?: unknown;
 		content?: unknown;
+		contentChars?: unknown;
 	};
 	return (
 		typeof item.key === "string" &&
 		typeof item.title === "string" &&
-		typeof item.content === "string"
+		typeof item.content === "string" &&
+		(item.contentChars === undefined || typeof item.contentChars === "number")
 	);
 }
 
@@ -59,6 +94,7 @@ function isStoredWebData(value: unknown): value is StoredWebData {
 		timestamp?: unknown;
 		items?: unknown;
 		synthesis?: unknown;
+		sessionTruncated?: unknown;
 	};
 	return (
 		typeof data.id === "string" &&
@@ -69,7 +105,9 @@ function isStoredWebData(value: unknown): value is StoredWebData {
 		typeof data.timestamp === "number" &&
 		Array.isArray(data.items) &&
 		data.items.every(isStoredItem) &&
-		(data.synthesis === undefined || typeof data.synthesis === "string")
+		(data.synthesis === undefined || typeof data.synthesis === "string") &&
+		(data.sessionTruncated === undefined ||
+			typeof data.sessionTruncated === "boolean")
 	);
 }
 
@@ -94,10 +132,17 @@ export function findStoredItem(
 	selector: {
 		query?: string;
 		queryIndex?: number;
+		sourceIndex?: number;
 		url?: string;
 		urlIndex?: number;
 	},
 ): StoredItem | string {
+	if (selector.sourceIndex !== undefined) {
+		return (
+			data.items[selector.sourceIndex] ??
+			`Source index ${selector.sourceIndex} out of range.`
+		);
+	}
 	if (selector.query !== undefined) {
 		const item = data.items.find(
 			(candidate) => candidate.query === selector.query,
@@ -124,5 +169,5 @@ export function findStoredItem(
 	const available = data.items
 		.map((item, index) => `${index}: ${item.query ?? item.url ?? item.title}`)
 		.join("\n");
-	return `Specify queryIndex or urlIndex. Available:\n${available}`;
+	return `Specify sourceIndex, queryIndex, or urlIndex. Available:\n${available}`;
 }

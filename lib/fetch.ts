@@ -134,7 +134,10 @@ async function extractHttp(
 
 export async function fetchOne(
 	url: string,
-	options: { maxCharacters?: number; forceClone?: boolean } = {},
+	options: {
+		maxCharacters?: number;
+		forceClone?: boolean;
+	} = {},
 	signal?: AbortSignal,
 ): Promise<FetchResult> {
 	const maxCharacters = options.maxCharacters ?? DEFAULT_FETCH_MAX_CHARS;
@@ -205,7 +208,10 @@ export async function fetchOne(
 
 export async function fetchMany(
 	urls: string[],
-	options: { maxCharacters?: number; forceClone?: boolean } = {},
+	options: {
+		maxCharacters?: number;
+		forceClone?: boolean;
+	} = {},
 	signal?: AbortSignal,
 ): Promise<FetchResult[]> {
 	const limit = pLimit(CONCURRENCY);

@@ -73,7 +73,7 @@ export async function searchWeb(
 			? { startPublishedDate: recencyStartDate(options.recencyFilter) }
 			: {}),
 		contents: {
-			highlights: { query, maxCharacters: 2_000 },
+			highlights: { query, maxCharacters: 4_000 },
 		},
 	} as Parameters<Exa["search"]>[1]);
 	return { results: (result.results ?? []) as ExaResult[] };
@@ -100,7 +100,6 @@ export async function fetchWithExa(
 ): Promise<{ title: string; content: string } | null> {
 	const result = await exaClient().getContents([url], {
 		text: { maxCharacters },
-		livecrawl: "fallback",
 		filterEmptyResults: true,
 	} as Parameters<Exa["getContents"]>[1]);
 	const first = result.results?.[0] as ExaResult | undefined;
@@ -111,24 +110,25 @@ export async function fetchWithExa(
 	};
 }
 
+export function formatExaResult(result: ExaResult, index: number): string {
+	const lines = [
+		`## ${index + 1}. ${result.title || "Untitled"}`,
+		`URL: ${result.url || ""}`,
+	];
+	if (result.publishedDate) lines.push(`Published: ${result.publishedDate}`);
+	if (result.author) lines.push(`Author: ${result.author}`);
+	if (Array.isArray(result.highlights) && result.highlights.length > 0) {
+		lines.push("", result.highlights.join("\n"));
+	}
+	if (result.text) {
+		lines.push("", result.text);
+	}
+	return lines.join("\n").trim();
+}
+
 export function formatExaResults(results: ExaResult[]): string {
 	if (results.length === 0) return "No results found.";
 	return results
-		.map((result, index) => {
-			const lines = [
-				`## ${index + 1}. ${result.title || "Untitled"}`,
-				`URL: ${result.url || ""}`,
-			];
-			if (result.publishedDate)
-				lines.push(`Published: ${result.publishedDate}`);
-			if (result.author) lines.push(`Author: ${result.author}`);
-			if (Array.isArray(result.highlights) && result.highlights.length > 0) {
-				lines.push("", result.highlights.join("\n"));
-			}
-			if (result.text) {
-				lines.push("", result.text);
-			}
-			return lines.join("\n").trim();
-		})
+		.map((result, index) => formatExaResult(result, index))
 		.join("\n\n---\n\n");
 }

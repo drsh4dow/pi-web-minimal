@@ -14,7 +14,7 @@ pi-web-minimal is intentionally a retrieval + distillation package, not a browse
 
 ## Current verdict
 
-The package follows the new core pattern: five retrieval tools, no UI workflow, adaptive context-firewall output, raw evidence stored out of context, and no broad provider fallback stack. Tiny evidence is compacted deterministically; larger evidence is model-distilled with source refs. The main context-risk remains `get_search_content`: it can rehydrate large stored content into the conversation. It returns a bounded slice by default and requires `maxCharacters` to opt into more context.
+The package follows the core pattern: five retrieval tools, no UI workflow, adaptive context-firewall output, raw evidence stored out of context, and no broad provider fallback stack. Visible output is extractive-first: ranked findings plus a source manifest. Tiny evidence is compacted deterministically; larger evidence is model-distilled with source refs; model failures fall back to bounded extractive findings rather than raw previews. The main context-risk remains `get_search_content`, now mitigated by a tighter default budget plus `sourceIndex`/`urlIndex`, `offset`, `section`, and `textSearch` selectors.
 
 ## Tool surface
 
@@ -24,17 +24,17 @@ The package follows the new core pattern: five retrieval tools, no UI workflow, 
 | `code_search` | Code/API examples and references | Compact or distilled source-cited brief; stores raw result by query index. |
 | `documentation_search` | Current library/framework docs via Context7 | Compact or distilled source-cited brief; stores raw documentation context by query index. |
 | `fetch_content` | Specific URL/GitHub retrieval | Compact or distilled source-cited brief for fetched URL batches; stores raw per-URL content. |
-| `get_search_content` | Explicit raw stored-content retrieval | Bounded raw content by default; caller chooses selector and `maxCharacters`. |
+| `get_search_content` | Explicit raw stored-content retrieval | Tighter bounded raw content by default; caller chooses source/url/query plus offset, heading section, text search, and `maxCharacters`. |
 
 Keeping these as separate tools is deliberate: the names map to distinct agent intents and avoid a large router schema.
 
 ## Context-pollution notes
 
 - `appendEntry()` custom entries are not sent to the LLM, so stored raw results avoid immediate context pollution.
-- Session files can still grow because stored content and distilled briefs are persisted for branch/reload recovery. This is acceptable for now because retrieval continuity and auditability are more valuable than an external cache, but it should be watched in eval reports.
+- Session persistence is deliberately bounded: full raw evidence stays in memory for the active session, while persisted custom entries are capped to preserve reload continuity without unbounded session growth.
 - Tool output must remain compact. Future additions should improve evidence selection, citations, selectors, filtering, pagination, or explicit retrieval rather than larger default outputs.
-- Tiny raw evidence should not be expanded through a model. Use deterministic compact mode unless the source is large enough to need synthesis.
-- Retrieved web/docs/code content is untrusted. Compact mode strips obvious instruction-like lines. Distillation prompts must separate source blocks from instructions and require source refs for substantive claims.
+- Tiny raw evidence should not be expanded through a model. Use deterministic extractive compact mode unless the source is large enough to need synthesis.
+- Retrieved web/docs/code content is untrusted. Extractive output filters obvious instruction-like lines. Distillation prompts must separate source blocks from instructions and require source refs for substantive claims.
 
 ## Autodiscovery notes
 
