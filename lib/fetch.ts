@@ -53,7 +53,7 @@ async function extractHttp(
 		]),
 		headers: {
 			"User-Agent":
-				"Mozilla/5.0 (compatible; pi-web-minimal/0.1; +https://github.com/drsh4dow/pi-web-minimal)",
+				"Mozilla/5.0 (compatible; pi-web-minimal/0.1; +https://codeberg.org/drsh4dow/pi-web-minimal)",
 			Accept:
 				"text/html,application/xhtml+xml,text/plain,application/json;q=0.9,*/*;q=0.8",
 		},
