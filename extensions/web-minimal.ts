@@ -590,9 +590,9 @@ export default function webMinimalExtension(pi: ExtensionAPI) {
 		name: "fetch_content",
 		label: "Fetch Content",
 		description:
-			"Fetch URL content as markdown/text and return model-distilled, source-cited findings plus raw stored content for follow-up retrieval. GitHub repos are shallow-cloned locally. Pages use HTTP readability extraction first, then Exa contents fallback.",
+			"Fetch known URL content as clean markdown/text and return model-distilled, source-cited findings plus raw stored content for follow-up retrieval. Firecrawl powers direct URL cleanup; GitHub repos are shallow-cloned locally; HTTP and Exa are fallbacks.",
 		promptSnippet:
-			"Use to fetch specific URLs. For GitHub repos, inspect the returned local path with read/bash if more detail is needed.",
+			"Use to expand specific URLs into clean content. Use web_search/code_search for discovery; for GitHub repos, inspect the returned local path with read/bash if more detail is needed.",
 		parameters: Type.Object({
 			url: Type.Optional(Type.String({ description: "Single URL to fetch" })),
 			urls: Type.Optional(

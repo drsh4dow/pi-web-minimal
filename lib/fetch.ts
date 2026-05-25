@@ -3,6 +3,7 @@ import { parseHTML } from "linkedom";
 import pLimit from "p-limit";
 import TurndownService from "turndown";
 import { fetchWithExa } from "./exa.ts";
+import { fetchWithFirecrawl } from "./firecrawl.ts";
 import { DEFAULT_FETCH_MAX_CHARS, errorMessage } from "./format.ts";
 import { extractGitHub } from "./github.ts";
 
@@ -19,7 +20,7 @@ export interface FetchResult {
 	title: string;
 	content: string;
 	error: string | null;
-	source: "github" | "http" | "exa";
+	source: "github" | "firecrawl" | "http" | "exa";
 }
 
 function titleFromText(text: string, url: string): string {
@@ -39,6 +40,31 @@ function capContent(text: string, maxCharacters: number): string {
 	return text.length > maxCharacters
 		? `${text.slice(0, maxCharacters)}\n\n[Content capped at ${maxCharacters} characters]`
 		: text;
+}
+
+function isPrivateIpv4(hostname: string): boolean {
+	const parts = hostname.split(".").map((part) => Number(part));
+	if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part))) {
+		return false;
+	}
+	const [first, second] = parts;
+	return (
+		first === 10 ||
+		first === 127 ||
+		(first === 169 && second === 254) ||
+		(first === 172 && second !== undefined && second >= 16 && second <= 31) ||
+		(first === 192 && second === 168)
+	);
+}
+
+function shouldUseRemoteFetchProvider(url: URL): boolean {
+	const hostname = url.hostname.toLowerCase();
+	return !(
+		hostname === "localhost" ||
+		hostname.endsWith(".localhost") ||
+		hostname === "[::1]" ||
+		isPrivateIpv4(hostname)
+	);
 }
 
 async function extractHttp(
@@ -174,35 +200,55 @@ export async function fetchOne(
 		};
 	}
 
-	try {
-		const httpResult = await extractHttp(url, maxCharacters, signal);
-		if (!httpResult.error) return httpResult;
-	} catch (error) {
-		if (errorMessage(error).toLowerCase().includes("abort")) throw error;
+	const errors: string[] = [];
+	const useRemoteProvider = shouldUseRemoteFetchProvider(parsed);
+
+	if (useRemoteProvider) {
+		try {
+			const firecrawlResult = await fetchWithFirecrawl(
+				url,
+				maxCharacters,
+				signal,
+			);
+			if (firecrawlResult) {
+				return { url, ...firecrawlResult, error: null, source: "firecrawl" };
+			}
+		} catch (error) {
+			if (errorMessage(error).toLowerCase().includes("abort")) throw error;
+			errors.push(`Firecrawl: ${errorMessage(error)}`);
+		}
 	}
 
 	try {
-		const exaResult = await fetchWithExa(url, maxCharacters);
-		if (exaResult) {
-			return { url, ...exaResult, error: null, source: "exa" };
-		}
+		const httpResult = await extractHttp(url, maxCharacters, signal);
+		if (!httpResult.error) return httpResult;
+		errors.push(`HTTP: ${httpResult.error}`);
 	} catch (error) {
 		if (errorMessage(error).toLowerCase().includes("abort")) throw error;
-		return {
-			url,
-			title: "",
-			content: "",
-			error: errorMessage(error),
-			source: "exa",
-		};
+		errors.push(`HTTP: ${errorMessage(error)}`);
+	}
+
+	if (useRemoteProvider) {
+		try {
+			const exaResult = await fetchWithExa(url, maxCharacters);
+			if (exaResult) {
+				return { url, ...exaResult, error: null, source: "exa" };
+			}
+		} catch (error) {
+			if (errorMessage(error).toLowerCase().includes("abort")) throw error;
+			errors.push(`Exa: ${errorMessage(error)}`);
+		}
 	}
 
 	return {
 		url,
 		title: "",
 		content: "",
-		error: "Could not extract content with HTTP or Exa.",
-		source: "exa",
+		error:
+			errors.length > 0
+				? `Could not extract content. ${errors.join(" | ")}`
+				: "Could not extract content.",
+		source: useRemoteProvider ? "exa" : "http",
 	};
 }
 

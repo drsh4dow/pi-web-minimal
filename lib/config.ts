@@ -7,6 +7,7 @@ export const CONFIG_PATH = join(homedir(), ".pi", "web-search.json");
 const env = process.env as {
 	EXA_API_KEY?: string;
 	CONTEXT7_API_KEY?: string;
+	FIRECRAWL_API_KEY?: string;
 	PI_OFFLINE?: string;
 	PI_WEB_MINIMAL_DISTILL_MODEL?: string;
 };
@@ -14,6 +15,7 @@ const env = process.env as {
 interface WebConfig {
 	exaApiKey?: unknown;
 	context7ApiKey?: unknown;
+	firecrawlApiKey?: unknown;
 	distillModel?: unknown;
 }
 
@@ -52,6 +54,12 @@ export function getContext7ApiKey(): string | null {
 	);
 }
 
+export function getFirecrawlApiKey(): string | null {
+	return (
+		cleanKey(env.FIRECRAWL_API_KEY) ?? cleanKey(loadConfig().firecrawlApiKey)
+	);
+}
+
 export function getDistillModelOverride(): string | null {
 	return (
 		cleanKey(env.PI_WEB_MINIMAL_DISTILL_MODEL) ??
@@ -76,5 +84,13 @@ export function requireContext7ApiKey(): string {
 	if (key) return key;
 	throw new Error(
 		`Context7 API key not found. Set CONTEXT7_API_KEY or add { "context7ApiKey": "ctx7sk-..." } to ${CONFIG_PATH}.`,
+	);
+}
+
+export function requireFirecrawlApiKey(): string {
+	const key = getFirecrawlApiKey();
+	if (key) return key;
+	throw new Error(
+		`Firecrawl API key not found. Set FIRECRAWL_API_KEY or add { "firecrawlApiKey": "fc-..." } to ${CONFIG_PATH}.`,
 	);
 }

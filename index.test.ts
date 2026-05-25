@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
 	fauxAssistantMessage,
 	type Model,
@@ -9,6 +12,7 @@ import type {
 	ExtensionContext,
 } from "@mariozechner/pi-coding-agent";
 import webMinimalExtension from "./extensions/web-minimal.ts";
+import { getFirecrawlApiKey } from "./lib/config.ts";
 import {
 	buildDistillationPrompt,
 	distillRetrieval,
@@ -17,6 +21,8 @@ import {
 } from "./lib/distill.ts";
 import { normalizeUrlForDedup } from "./lib/evidence.ts";
 import { splitDomainFilter } from "./lib/exa.ts";
+import { fetchOne } from "./lib/fetch.ts";
+import { fetchWithFirecrawl } from "./lib/firecrawl.ts";
 import {
 	CONTENT_RETRIEVAL_CHARS,
 	DISTILLED_OUTPUT_CHARS,
@@ -61,6 +67,165 @@ function fauxContext(model: Model<string>): ExtensionContext {
 		},
 	} as unknown as ExtensionContext;
 }
+
+type FetchStub = (
+	input: Parameters<typeof fetch>[0],
+	init?: Parameters<typeof fetch>[1],
+) => ReturnType<typeof fetch>;
+
+async function withFetchStub<T>(
+	stub: FetchStub,
+	run: () => Promise<T>,
+): Promise<T> {
+	const originalFetch = globalThis.fetch;
+	globalThis.fetch = stub as typeof fetch;
+	try {
+		return await run();
+	} finally {
+		globalThis.fetch = originalFetch;
+	}
+}
+
+const testEnv = process.env as { FIRECRAWL_API_KEY?: string };
+
+async function withFirecrawlKey<T>(
+	value: string,
+	run: () => Promise<T>,
+): Promise<T> {
+	const previous = testEnv.FIRECRAWL_API_KEY;
+	testEnv.FIRECRAWL_API_KEY = value;
+	try {
+		return await run();
+	} finally {
+		if (previous === undefined) delete testEnv.FIRECRAWL_API_KEY;
+		else testEnv.FIRECRAWL_API_KEY = previous;
+	}
+}
+
+describe("configuration", () => {
+	test("reads Firecrawl API key from environment", async () => {
+		await withFirecrawlKey(" fc-test-key ", async () => {
+			expect(getFirecrawlApiKey()).toBe("fc-test-key");
+		});
+	});
+
+	test("reads Firecrawl API key from web-search.json", async () => {
+		const home = await mkdtemp(join(tmpdir(), "pi-web-minimal-config-"));
+		try {
+			await mkdir(join(home, ".pi"), { recursive: true });
+			await writeFile(
+				join(home, ".pi", "web-search.json"),
+				JSON.stringify({ firecrawlApiKey: " fc-file-key " }),
+			);
+			const proc = Bun.spawn(
+				[
+					"bun",
+					"--eval",
+					'import { getFirecrawlApiKey } from "./lib/config.ts"; console.log(getFirecrawlApiKey() ?? "");',
+				],
+				{
+					cwd: import.meta.dir,
+					env: { ...process.env, HOME: home, FIRECRAWL_API_KEY: "" },
+					stderr: "pipe",
+					stdout: "pipe",
+				},
+			);
+			const [exitCode, stdout, stderr] = await Promise.all([
+				proc.exited,
+				new Response(proc.stdout).text(),
+				new Response(proc.stderr).text(),
+			]);
+			expect(stderr).toBe("");
+			expect(exitCode).toBe(0);
+			expect(stdout.trim()).toBe("fc-file-key");
+		} finally {
+			await rm(home, { recursive: true, force: true });
+		}
+	});
+});
+
+describe("firecrawl fetch", () => {
+	test("scrape result is normalized to fetched content", async () => {
+		await withFirecrawlKey("fc-test-key", async () => {
+			const result = await withFetchStub(
+				async (input, init) => {
+					expect(String(input)).toBe("https://api.firecrawl.dev/v2/scrape");
+					expect(init?.method).toBe("POST");
+					expect(init?.headers).toMatchObject({
+						Authorization: "Bearer fc-test-key",
+						"Content-Type": "application/json",
+					});
+					expect(JSON.parse(String(init?.body))).toMatchObject({
+						url: "https://example.com/page",
+						formats: ["markdown"],
+						onlyMainContent: true,
+					});
+					return new Response(
+						JSON.stringify({
+							success: true,
+							data: {
+								markdown: "# Clean page\n\nUseful content.",
+								metadata: { title: "Clean page" },
+							},
+						}),
+						{ headers: { "content-type": "application/json" } },
+					);
+				},
+				() => fetchWithFirecrawl("https://example.com/page", 1000),
+			);
+			expect(result).toEqual({
+				title: "Clean page",
+				content: "# Clean page\n\nUseful content.",
+			});
+		});
+	});
+
+	test("direct URL fetch tries Firecrawl before HTTP", async () => {
+		await withFirecrawlKey("fc-test-key", async () => {
+			const result = await withFetchStub(
+				async () =>
+					new Response(
+						JSON.stringify({
+							success: true,
+							data: {
+								markdown: "Firecrawl cleaned content.",
+								metadata: { title: "Firecrawl title" },
+							},
+						}),
+						{ headers: { "content-type": "application/json" } },
+					),
+				() => fetchOne("https://example.com/direct", { maxCharacters: 1000 }),
+			);
+			expect(result.source).toBe("firecrawl");
+			expect(result.error).toBeNull();
+			expect(result.content).toBe("Firecrawl cleaned content.");
+		});
+	});
+
+	test("Firecrawl failure falls back to HTTP extraction", async () => {
+		await withFirecrawlKey("fc-test-key", async () => {
+			let calls = 0;
+			const result = await withFetchStub(
+				async (input) => {
+					calls += 1;
+					if (String(input).includes("api.firecrawl.dev")) {
+						return new Response(JSON.stringify({ error: "scrape failed" }), {
+							status: 502,
+						});
+					}
+					return new Response("Plain fallback content.", {
+						headers: { "content-type": "text/plain" },
+					});
+				},
+				() => fetchOne("https://example.com/fallback", { maxCharacters: 1000 }),
+			);
+			expect(calls).toBe(2);
+			expect(result.source).toBe("http");
+			expect(result.error).toBeNull();
+			expect(result.content).toBe("Plain fallback content.");
+		});
+	});
+});
 
 describe("pi-web-minimal extension", () => {
 	test("registers only the minimal retrieval tools", () => {

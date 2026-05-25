@@ -9,7 +9,7 @@ pi-web-minimal is intentionally a retrieval + distillation package, not a browse
 - Store larger raw content outside the assistant message and require explicit retrieval by `responseId`.
 - Keep `get_search_content` deterministic and raw as the audit/escape hatch.
 - Make tool names, descriptions, and parameter descriptions enough for agent autodiscovery without long prompt guidelines.
-- Keep provider policy narrow: Exa for web/code/content fallback, Context7 for library docs, and Pi's configured model for distillation. Add another provider only if real Pi evals show a persistent gap.
+- Keep provider policy narrow: Firecrawl for direct URL cleanup, Exa for web/code discovery and content fallback, Context7 for library docs, and Pi's configured model for distillation. Add another provider only if real Pi evals show a persistent gap.
 - Validate package discovery through Pi itself, not only unit tests.
 
 ## Current verdict
@@ -23,7 +23,7 @@ The package follows the core pattern: five retrieval tools, no UI workflow, adap
 | `web_search` | Current/web source discovery | Compact or distilled source-cited brief; stores raw formatted result by query index. |
 | `code_search` | Code/API examples and references | Compact or distilled source-cited brief; stores raw result by query index. |
 | `documentation_search` | Current library/framework docs via Context7 | Compact or distilled source-cited brief; stores raw documentation context by query index. |
-| `fetch_content` | Specific URL/GitHub retrieval | Compact or distilled source-cited brief for fetched URL batches; stores raw per-URL content. |
+| `fetch_content` | Specific URL/GitHub retrieval | Firecrawl-cleaned direct URL content or local GitHub repo/file content, compacted or distilled; stores raw per-URL content. |
 | `get_search_content` | Explicit raw stored-content retrieval | Tighter bounded raw content by default; caller chooses source/url/query plus offset, heading section, text search, and `maxCharacters`. |
 
 Keeping these as separate tools is deliberate: the names map to distinct agent intents and avoid a large router schema.
